@@ -1,15 +1,18 @@
 import 'package:flutter/material.dart';
-import 'package:tpm_flora/screens/main_page.dart';
+import 'package:tpm_flora/screens/home_screen.dart'; // Akan dibuat nanti, arahkan ke HomeScreen
 import 'package:tpm_flora/screens/register_page.dart';
+import '../database/database_helper.dart';
+import '../models/user.dart';
+import '../services/session_service.dart';
 
-class Loginpage extends StatefulWidget {
-  const Loginpage({super.key});
+class LoginPage extends StatefulWidget {
+  const LoginPage({super.key});
 
   @override
-  State<Loginpage> createState() => _LoginpageState();
+  State<LoginPage> createState() => _LoginPageState();
 }
 
-class _LoginpageState extends State<Loginpage> {
+class _LoginPageState extends State<LoginPage> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
@@ -17,29 +20,51 @@ class _LoginpageState extends State<Loginpage> {
   bool _isLoading = false;
   String? _errorMessage;
 
-  void _login() {
+  final DatabaseHelper _dbHelper = DatabaseHelper();
+  final SessionService _sessionService = SessionService();
+
+  Future<void> _login() async {
     if (_formKey.currentState!.validate()) {
       setState(() {
         _isLoading = true;
         _errorMessage = null;
       });
 
-      // Simulate network delay
-      Future.delayed(const Duration(seconds: 1), () {
-        if (_emailController.text == 'admin@gmail.com' &&
-            _passwordController.text == 'admin') {
-          // Navigate to next screen on successful login
-          Navigator.push(
+      try {
+        User? user = await _dbHelper.loginUser(
+          _emailController.text,
+          _passwordController.text,
+        );
+
+        if (!mounted) return;
+
+        if (user != null) {
+          // Ambil nama lengkap dari objek user yang dikembalikan oleh loginUser
+          await _sessionService.createSession(user.email, user.fullName);
+          Navigator.pushReplacement(
             context,
-            MaterialPageRoute(builder: (context) => MainPage()),
+            MaterialPageRoute(
+              builder: (context) => const HomeScreen(),
+            ), // Arahkan ke HomeScreen
           );
         } else {
           setState(() {
-            _errorMessage = 'Email atau password salah';
+            _errorMessage = 'Email atau password salah.';
+          });
+        }
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _errorMessage = 'Terjadi kesalahan: ${e.toString()}';
+          });
+        }
+      } finally {
+        if (mounted) {
+          setState(() {
             _isLoading = false;
           });
         }
-      });
+      }
     }
   }
 
@@ -54,29 +79,33 @@ class _LoginpageState extends State<Loginpage> {
             key: _formKey,
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Icon(Icons.eco_rounded, size: 100, color: Colors.green[800]),
-                const SizedBox(height: 20),
+                Icon(Icons.eco_rounded, size: 80, color: Colors.green[700]),
+                const SizedBox(height: 16),
                 Text(
-                  'FLORA',
+                  'Selamat Datang Kembali!',
+                  textAlign: TextAlign.center,
                   style: TextStyle(
-                    fontSize: 32,
+                    fontSize: 28,
                     fontWeight: FontWeight.bold,
                     color: Colors.green[800],
                   ),
                 ),
-                const SizedBox(height: 40),
+                const SizedBox(height: 8),
+                Text(
+                  'Login untuk melanjutkan ke FLORA',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 16, color: Colors.grey[700]),
+                ),
+                const SizedBox(height: 32),
                 if (_errorMessage != null)
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    margin: const EdgeInsets.only(bottom: 20),
-                    decoration: BoxDecoration(
-                      color: Colors.red.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 16.0),
                     child: Text(
                       _errorMessage!,
-                      style: const TextStyle(color: Colors.red),
+                      style: const TextStyle(color: Colors.red, fontSize: 14),
+                      textAlign: TextAlign.center,
                     ),
                   ),
                 TextFormField(
@@ -84,18 +113,29 @@ class _LoginpageState extends State<Loginpage> {
                   keyboardType: TextInputType.emailAddress,
                   decoration: InputDecoration(
                     labelText: 'Email',
-                    prefixIcon: const Icon(Icons.email, color: Colors.green),
+                    prefixIcon: Icon(
+                      Icons.email_outlined,
+                      color: Colors.green[700],
+                    ),
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                     focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide(color: Colors.green[800]!),
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: Colors.green[800]!,
+                        width: 2,
+                      ),
                     ),
                   ),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
-                      return 'Silakan masukkan email';
+                      return 'Masukkan email Anda';
+                    }
+                    if (!RegExp(
+                      r"^[a-zA-Z0-9.a-zA-Z0-9.!#$%&'*+-/=?^_`{|}~]+@[a-zA-Z0-9]+\.[a-zA-Z]+",
+                    ).hasMatch(value)) {
+                      return 'Masukkan email yang valid';
                     }
                     return null;
                   },
@@ -106,11 +146,16 @@ class _LoginpageState extends State<Loginpage> {
                   obscureText: _isObscure,
                   decoration: InputDecoration(
                     labelText: 'Password',
-                    prefixIcon: const Icon(Icons.lock, color: Colors.green),
+                    prefixIcon: Icon(
+                      Icons.lock_outline,
+                      color: Colors.green[700],
+                    ),
                     suffixIcon: IconButton(
                       icon: Icon(
-                        _isObscure ? Icons.visibility_off : Icons.visibility,
-                        color: Colors.green,
+                        _isObscure
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                        color: Colors.green[700],
                       ),
                       onPressed: () {
                         setState(() {
@@ -119,64 +164,69 @@ class _LoginpageState extends State<Loginpage> {
                       },
                     ),
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                     focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide(color: Colors.green[800]!),
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: Colors.green[800]!,
+                        width: 2,
+                      ),
                     ),
                   ),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
-                      return 'Silakan masukkan password';
+                      return 'Masukkan password Anda';
                     }
                     return null;
                   },
                 ),
                 const SizedBox(height: 30),
-                SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: ElevatedButton(
-                    onPressed: _isLoading ? null : _login,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green[800],
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      disabledBackgroundColor: Colors.green[300],
+                ElevatedButton(
+                  onPressed: _isLoading ? null : _login,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green[700],
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    child:
-                        _isLoading
-                            ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                color: Colors.white,
-                                strokeWidth: 2,
-                              ),
-                            )
-                            : const Text('LOGIN'),
                   ),
+                  child:
+                      _isLoading
+                          ? const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 3,
+                            ),
+                          )
+                          : const Text(
+                            'LOGIN',
+                            style: TextStyle(fontSize: 16, color: Colors.white),
+                          ),
                 ),
+                const SizedBox(height: 20),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Text('Don\'t have an account?'),
+                    const Text("Belum punya akun?"),
                     TextButton(
                       onPressed: () {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (context) => RegisterPage(),
+                            builder: (context) => const RegisterPage(),
                           ),
                         );
                       },
-                      style: TextButton.styleFrom(
-                        foregroundColor: Colors.green[800],
+                      child: Text(
+                        'Daftar Sekarang',
+                        style: TextStyle(
+                          color: Colors.green[800],
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                      child: const Text('Login'),
                     ),
                   ],
                 ),

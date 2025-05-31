@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'dart:convert'; // Import untuk jsonEncode (untuk debug print)
 import '../models/plant.dart';
 import '../services/api_service.dart';
+import '../utils/string_extensions.dart';
+import '../database/database_helper.dart';
 
 class PlantForm extends StatefulWidget {
-  final Plant? plant; // Null for adding new plant, non-null for editing
+  final Plant? plant;
   final VoidCallback onSuccess;
 
   const PlantForm({Key? key, this.plant, required this.onSuccess})
@@ -17,13 +20,11 @@ class _PlantFormState extends State<PlantForm> {
   final _formKey = GlobalKey<FormState>();
   bool _isLoading = false;
   String? _errorMessage;
-  List<String> _selectedPlacements = []; // Changed from _placements
+  List<String> _selectedPlacements = [];
 
-  // Form controllers & state variables
   late TextEditingController _nameController;
   late TextEditingController _descriptionController;
   late TextEditingController _priceController;
-  // Dropdown values
   String? _selectedSizeCategory;
   late TextEditingController _sizeDimensionsController;
   String? _selectedLightIntensity;
@@ -32,9 +33,10 @@ class _PlantFormState extends State<PlantForm> {
   String? _selectedIndoorDurability;
   late TextEditingController _stockQuantityController;
   late TextEditingController _imageUrlController;
-  late bool _isActive;
+  late bool _isActiveForm;
 
-  // Options based on schema
+  final DatabaseHelper _dbHelper = DatabaseHelper();
+
   final List<String> _sizeCategoryOptions = ['meja', 'sedang', 'besar'];
   final List<String> _lightIntensityOptions = ['rendah', 'sedang', 'tinggi'];
   final List<String> _priceCategoryOptions = [
@@ -57,7 +59,6 @@ class _PlantFormState extends State<PlantForm> {
   @override
   void initState() {
     super.initState();
-
     _nameController = TextEditingController(text: widget.plant?.name ?? '');
     _descriptionController = TextEditingController(
       text: widget.plant?.description ?? '',
@@ -72,43 +73,65 @@ class _PlantFormState extends State<PlantForm> {
     _stockQuantityController = TextEditingController(
       text: widget.plant?.stock_quantity?.toString() ?? '',
     );
-    _imageUrlController = TextEditingController(
-      text: widget.plant?.image_url ?? '',
-    );
-    _isActive = widget.plant?.is_active ?? true;
+    // _isActiveForm diinisialisasi dari widget.plant.is_active (yang mungkin null jika API GET tidak mengirimnya)
+    // Jika API GET tidak mengirim is_active, maka widget.plant.is_active akan null,
+    // dan _isActiveForm akan menjadi true. Ini hanya untuk UI form.
+    _isActiveForm = widget.plant?.is_active ?? true;
 
-    // Initialize dropdown values
+    _imageUrlController = TextEditingController();
+    if (widget.plant != null) {
+      if (widget.plant!.id != null) {
+        _loadInitialImageUrl(widget.plant!.id!, widget.plant!.image_url);
+      } else {
+        _imageUrlController.text = widget.plant!.image_url ?? '';
+      }
+    } else {
+      _imageUrlController.text = '';
+    }
+
     _selectedSizeCategory = widget.plant?.size_category;
     if (_selectedSizeCategory != null &&
         !_sizeCategoryOptions.contains(_selectedSizeCategory)) {
-      _selectedSizeCategory = null; // Reset if not a valid option
+      _selectedSizeCategory = null;
     }
-
     _selectedLightIntensity = widget.plant?.light_intensity;
     if (_selectedLightIntensity != null &&
         !_lightIntensityOptions.contains(_selectedLightIntensity)) {
       _selectedLightIntensity = null;
     }
-
     _selectedPriceCategory = widget.plant?.price_category;
     if (_selectedPriceCategory != null &&
         !_priceCategoryOptions.contains(_selectedPriceCategory)) {
       _selectedPriceCategory = null;
     }
-
     _selectedIndoorDurability = widget.plant?.indoor_durability;
     if (_selectedIndoorDurability != null &&
         !_indoorDurabilityOptions.contains(_selectedIndoorDurability)) {
       _selectedIndoorDurability = null;
     }
 
-    // Initialize placements
     if (widget.plant?.placements != null) {
       _selectedPlacements = List<String>.from(
         widget.plant!.placements!.where(
           (p) => _placementTypeOptions.contains(p),
         ),
       );
+    }
+
+    _imageUrlController.addListener(() {
+      if (mounted) setState(() {});
+    });
+  }
+
+  Future<void> _loadInitialImageUrl(
+    int plantId,
+    String? apiUrlFromPlantObject,
+  ) async {
+    String? localUrl = await _dbHelper.getLocalPlantImageUrl(plantId);
+    if (mounted) {
+      setState(() {
+        _imageUrlController.text = localUrl ?? apiUrlFromPlantObject ?? '';
+      });
     }
   }
 
@@ -117,14 +140,13 @@ class _PlantFormState extends State<PlantForm> {
     _nameController.dispose();
     _descriptionController.dispose();
     _priceController.dispose();
-    // No need to dispose _selectedSizeCategory etc. as they are not controllers
     _sizeDimensionsController.dispose();
     _stockQuantityController.dispose();
     _imageUrlController.dispose();
     super.dispose();
   }
 
-  void _handleSubmit() async {
+  Future<void> _handleSubmit() async {
     if (!_formKey.currentState!.validate()) return;
 
     setState(() {
@@ -133,80 +155,133 @@ class _PlantFormState extends State<PlantForm> {
     });
 
     try {
-      final Plant plantData = Plant(
+      // Membuat objek Plant hanya dengan field yang relevan untuk API
+      // Metode toJson() di model Plant akan menjadi filter akhir.
+      Plant plantDataForApi = Plant(
+        // Untuk UPDATE, ID akan digunakan oleh ApiService untuk URL, bukan di body.
+        // Untuk CREATE, ID akan null dan di-generate server.
         id: widget.plant?.id,
         name: _nameController.text,
         description: _descriptionController.text,
-        price: int.tryParse(_priceController.text) ?? 0, // Parse as int
-        size_category:
-            _selectedSizeCategory!, // Ensure it's selected via validation
-        size_dimensions: _sizeDimensionsController.text,
-        light_intensity: _selectedLightIntensity!, // Ensure it's selected
-        price_category: _selectedPriceCategory!, // Ensure it's selected
+        price: int.tryParse(_priceController.text),
+        size_category: _selectedSizeCategory,
+        size_dimensions:
+            _sizeDimensionsController.text.isEmpty
+                ? null
+                : _sizeDimensionsController.text,
+        light_intensity: _selectedLightIntensity,
+        price_category: _selectedPriceCategory,
         has_flowers: _hasFlowers,
-        indoor_durability: _selectedIndoorDurability!, // Ensure it's selected
-        stock_quantity: int.tryParse(_stockQuantityController.text) ?? 0,
-        image_url: _imageUrlController.text,
-        is_active: _isActive,
-        placements: _selectedPlacements,
+        indoor_durability: _selectedIndoorDurability,
+        stock_quantity: int.tryParse(_stockQuantityController.text),
+        placements: _selectedPlacements.isEmpty ? null : _selectedPlacements,
+        // image_url, is_active, created_at, updated_at, localImageUrl tidak di-set di sini
+        // karena akan diurus oleh toJson() atau tidak relevan untuk payload API.
       );
 
-      Map<String, dynamic> response;
+      Map<String, dynamic> apiResponse;
+      String successMessage;
+      int? plantIdForDb = widget.plant?.id;
 
-      // Call the appropriate API method
+      // --- DEBUG PAYLOAD ---
+      final String jsonPayload = jsonEncode(plantDataForApi);
+      print("====== JSON Payload to API ======");
+      print(jsonPayload);
+      print("================================");
+      // --- AKHIR DEBUG PAYLOAD ---
+
       if (widget.plant == null) {
-        // Add new plant
-        response = await ApiService.addPlant(plantData);
+        apiResponse = await ApiService.addPlant(plantDataForApi);
+        successMessage =
+            apiResponse['message'] as String? ?? 'Tanaman berhasil ditambahkan';
+        if (apiResponse['success'] == true &&
+            apiResponse['data'] != null &&
+            apiResponse['data']['id'] != null) {
+          plantIdForDb = apiResponse['data']['id'];
+        } else if (apiResponse['success'] != true) {
+          throw Exception(
+            apiResponse['error']?['message'] ??
+                apiResponse['message'] ??
+                'Gagal menambahkan tanaman via API',
+          );
+        }
       } else {
-        // Update existing plant
-        response = await ApiService.updatePlant(plantData);
+        apiResponse = await ApiService.updatePlant(plantDataForApi);
+        successMessage =
+            apiResponse['message'] as String? ?? 'Tanaman berhasil diperbarui';
+        if (apiResponse['success'] != true) {
+          // Ambil pesan error lebih detail jika ada
+          String errorDetails = "";
+          if (apiResponse['error'] != null &&
+              apiResponse['error']['details'] != null) {
+            errorDetails =
+                " Details: ${jsonEncode(apiResponse['error']['details'])}";
+          }
+          throw Exception(
+            (apiResponse['error']?['message'] ??
+                    apiResponse['message'] ??
+                    'Gagal memperbarui tanaman via API') +
+                errorDetails,
+          );
+        }
       }
 
-      if (response['success'] == true) {
-        if (!mounted) return;
+      if (plantIdForDb != null) {
+        if (_imageUrlController.text.isNotEmpty) {
+          await _dbHelper.upsertLocalPlantImageUrl(
+            plantIdForDb,
+            _imageUrlController.text,
+          );
+        } else {
+          await _dbHelper.deleteLocalPlantImageUrl(plantIdForDb);
+        }
+      }
 
-        // Show success message
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              widget.plant == null
-                  ? 'Plant added successfully'
-                  : 'Plant updated successfully',
-            ),
-          ),
-        );
+      if (!mounted) return;
 
-        // Call the success callback
-        widget.onSuccess();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(successMessage), backgroundColor: Colors.green),
+      );
 
-        // Navigate back
-        Navigator.pop(context);
-      } else {
+      widget.onSuccess();
+      Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
         setState(() {
-          _errorMessage = response['message'] ?? 'An error occurred';
+          _errorMessage = e.toString().replaceFirst("Exception: ", "");
           _isLoading = false;
         });
       }
-    } catch (e) {
-      setState(() {
-        _errorMessage = e.toString();
-        _isLoading = false;
-      });
     }
+  }
+
+  Widget _buildSectionTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 24.0, bottom: 8.0),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 18,
+          fontWeight: FontWeight.bold,
+          color: Colors.green[800],
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.plant == null ? 'Add New Plant' : 'Edit Plant'),
-        backgroundColor: Colors.green[700],
+        title: Text(
+          widget.plant == null ? 'Tambah Tanaman Baru' : 'Edit Tanaman',
+        ),
       ),
       body:
           _isLoading
               ? const Center(child: CircularProgressIndicator())
               : SingleChildScrollView(
-                padding: const EdgeInsets.all(16.0),
+                padding: const EdgeInsets.all(20.0),
                 child: Form(
                   key: _formKey,
                   child: Column(
@@ -215,325 +290,274 @@ class _PlantFormState extends State<PlantForm> {
                       if (_errorMessage != null)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 16.0),
-                          child: Text(
-                            _errorMessage!,
-                            style: const TextStyle(
-                              color: Colors.red,
-                              fontWeight: FontWeight.bold,
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.red[100],
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.red[700]!),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.error_outline,
+                                  color: Colors.red[700],
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    _errorMessage!,
+                                    style: TextStyle(
+                                      color: Colors.red[700],
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
 
-                      // Basic Information
-                      const Text(
-                        'Basic Information',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-
-                      // Name
+                      _buildSectionTitle('Informasi Dasar'),
                       TextFormField(
                         controller: _nameController,
                         decoration: const InputDecoration(
-                          labelText: 'Name',
-                          border: OutlineInputBorder(),
+                          labelText: 'Nama Tanaman*',
                         ),
                         validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Please enter plant name';
-                          }
+                          if (value == null || value.isEmpty)
+                            return 'Masukkan nama tanaman';
                           return null;
                         },
                       ),
                       const SizedBox(height: 16),
-
-                      // Description
                       TextFormField(
                         controller: _descriptionController,
                         decoration: const InputDecoration(
-                          labelText: 'Description',
-                          border: OutlineInputBorder(),
+                          labelText: 'Deskripsi*',
                           alignLabelWithHint: true,
                         ),
                         minLines: 3,
                         maxLines: 5,
                         validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Please enter plant description';
-                          }
+                          if (value == null || value.isEmpty)
+                            return 'Masukkan deskripsi';
                           return null;
                         },
                       ),
                       const SizedBox(height: 16),
-
-                      // Price
-                      TextFormField(
-                        controller: _priceController,
-                        decoration: const InputDecoration(
-                          labelText: 'Price',
-                          border: OutlineInputBorder(),
-                          prefixText: 'Rp',
-                        ),
-                        keyboardType: TextInputType.number,
-                        validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Please enter price';
-                          }
-                          if (int.tryParse(value) == null) {
-                            // Validate as int
-                            return 'Please enter a valid whole number for price';
-                          }
-                          return null;
-                        },
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: _priceController,
+                              decoration: const InputDecoration(
+                                labelText: 'Harga (Rp)*',
+                                prefixText: 'Rp ',
+                              ),
+                              keyboardType: TextInputType.number,
+                              validator: (value) {
+                                if (value == null || value.isEmpty)
+                                  return 'Masukkan harga';
+                                if (int.tryParse(value) == null)
+                                  return 'Harga tidak valid';
+                                if (int.parse(value) < 0)
+                                  return 'Harga tidak boleh negatif';
+                                return null;
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: TextFormField(
+                              controller: _stockQuantityController,
+                              decoration: const InputDecoration(
+                                labelText: 'Stok*',
+                              ),
+                              keyboardType: TextInputType.number,
+                              validator: (value) {
+                                if (value == null || value.isEmpty)
+                                  return 'Masukkan stok';
+                                if (int.tryParse(value) == null)
+                                  return 'Stok tidak valid';
+                                if (int.parse(value) < 0)
+                                  return 'Stok tidak boleh negatif';
+                                return null;
+                              },
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 16),
-
-                      // Stock Quantity
-                      TextFormField(
-                        controller: _stockQuantityController,
-                        decoration: const InputDecoration(
-                          labelText: 'Stock Quantity',
-                          border: OutlineInputBorder(),
-                        ),
-                        keyboardType: TextInputType.number,
-                        validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Please enter stock quantity';
-                          }
-                          if (int.tryParse(value) == null) {
-                            return 'Please enter a valid number';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 16),
-
-                      // Image URL
                       TextFormField(
                         controller: _imageUrlController,
                         decoration: const InputDecoration(
-                          labelText: 'Image URL',
-                          border: OutlineInputBorder(),
+                          labelText: 'URL Gambar (Lokal/Online)',
                         ),
                         validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Please enter image URL';
+                          if (value != null && value.isNotEmpty) {
+                            final uri = Uri.tryParse(value);
+                            if (uri == null ||
+                                !uri.isAbsolute ||
+                                (uri.scheme != 'http' &&
+                                    uri.scheme != 'https')) {
+                              return 'Masukkan URL yang valid (http/https)';
+                            }
                           }
                           return null;
                         },
                       ),
-                      const SizedBox(height: 8),
-
-                      // Image Preview
-                      if (_imageUrlController.text.isNotEmpty)
-                        Container(
-                          height: 150,
-                          width: double.infinity,
-                          margin: const EdgeInsets.symmetric(vertical: 8),
-                          decoration: BoxDecoration(
-                            color: Colors.grey[200],
-                            border: Border.all(color: Colors.grey),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Image.network(
-                            _imageUrlController.text,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return const Center(
-                                child: Text('Invalid image URL'),
-                              );
-                            },
+                      if (_imageUrlController.text.isNotEmpty &&
+                          Uri.tryParse(_imageUrlController.text)?.isAbsolute ==
+                              true)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8.0),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Image.network(
+                              _imageUrlController.text,
+                              height: 150,
+                              width: double.infinity,
+                              fit: BoxFit.cover,
+                              errorBuilder:
+                                  (context, error, stackTrace) => Container(
+                                    height: 150,
+                                    color: Colors.grey[200],
+                                    child: const Center(
+                                      child: Text('URL Gambar Tidak Valid'),
+                                    ),
+                                  ),
+                            ),
                           ),
                         ),
-                      const SizedBox(height: 24),
 
-                      // Additional Details Section
-                      const Text(
-                        'Additional Details',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-
-                      // Size Category
+                      _buildSectionTitle('Karakteristik Tanaman'),
                       DropdownButtonFormField<String>(
                         value: _selectedSizeCategory,
                         decoration: const InputDecoration(
-                          labelText: 'Size Category',
-                          border: OutlineInputBorder(),
+                          labelText: 'Kategori Ukuran*',
                         ),
                         items:
-                            _sizeCategoryOptions.map((String value) {
-                              return DropdownMenuItem<String>(
-                                value: value,
-                                child: Text(value),
-                              );
-                            }).toList(),
-                        onChanged: (String? newValue) {
-                          setState(() {
-                            _selectedSizeCategory = newValue;
-                          });
-                        },
+                            _sizeCategoryOptions
+                                .map(
+                                  (val) => DropdownMenuItem(
+                                    value: val,
+                                    child: Text(val.capitalizeFirstLetter()),
+                                  ),
+                                )
+                                .toList(),
+                        onChanged:
+                            (val) =>
+                                setState(() => _selectedSizeCategory = val),
                         validator:
-                            (value) =>
-                                value == null
-                                    ? 'Please select size category'
-                                    : null,
+                            (value) => value == null ? 'Wajib diisi' : null,
                       ),
                       const SizedBox(height: 16),
-
-                      // Size Dimensions
                       TextFormField(
                         controller: _sizeDimensionsController,
                         decoration: const InputDecoration(
-                          labelText: 'Size Dimensions',
-                          border: OutlineInputBorder(),
-                          hintText: 'e.g., 10 x 15 cm',
+                          labelText: 'Dimensi Ukuran (cth: 10x15 cm)',
                         ),
                       ),
                       const SizedBox(height: 16),
-
-                      // Light Intensity
                       DropdownButtonFormField<String>(
                         value: _selectedLightIntensity,
                         decoration: const InputDecoration(
-                          labelText: 'Light Intensity',
-                          border: OutlineInputBorder(),
+                          labelText: 'Intensitas Cahaya*',
                         ),
                         items:
-                            _lightIntensityOptions.map((String value) {
-                              return DropdownMenuItem<String>(
-                                value: value,
-                                child: Text(value),
-                              );
-                            }).toList(),
-                        onChanged: (String? newValue) {
-                          setState(() {
-                            _selectedLightIntensity = newValue;
-                          });
-                        },
+                            _lightIntensityOptions
+                                .map(
+                                  (val) => DropdownMenuItem(
+                                    value: val,
+                                    child: Text(val.capitalizeFirstLetter()),
+                                  ),
+                                )
+                                .toList(),
+                        onChanged:
+                            (val) =>
+                                setState(() => _selectedLightIntensity = val),
                         validator:
-                            (value) =>
-                                value == null
-                                    ? 'Please select light intensity'
-                                    : null,
+                            (value) => value == null ? 'Wajib diisi' : null,
                       ),
                       const SizedBox(height: 16),
-
-                      // Price Category
                       DropdownButtonFormField<String>(
                         value: _selectedPriceCategory,
                         decoration: const InputDecoration(
-                          labelText: 'Price Category',
-                          border: OutlineInputBorder(),
+                          labelText: 'Kategori Harga*',
                         ),
                         items:
-                            _priceCategoryOptions.map((String value) {
-                              return DropdownMenuItem<String>(
-                                value: value,
-                                child: Text(value),
-                              );
-                            }).toList(),
-                        onChanged: (String? newValue) {
-                          setState(() {
-                            _selectedPriceCategory = newValue;
-                          });
-                        },
+                            _priceCategoryOptions
+                                .map(
+                                  (val) => DropdownMenuItem(
+                                    value: val,
+                                    child: Text(val.capitalizeFirstLetter()),
+                                  ),
+                                )
+                                .toList(),
+                        onChanged:
+                            (val) =>
+                                setState(() => _selectedPriceCategory = val),
                         validator:
-                            (value) =>
-                                value == null
-                                    ? 'Please select price category'
-                                    : null,
+                            (value) => value == null ? 'Wajib diisi' : null,
                       ),
                       const SizedBox(height: 16),
-
-                      // Indoor Durability
                       DropdownButtonFormField<String>(
                         value: _selectedIndoorDurability,
                         decoration: const InputDecoration(
-                          labelText: 'Indoor Durability',
-                          border: OutlineInputBorder(),
+                          labelText: 'Daya Tahan Indoor*',
                         ),
                         items:
-                            _indoorDurabilityOptions.map((String value) {
-                              return DropdownMenuItem<String>(
-                                value: value,
-                                child: Text(value),
-                              );
-                            }).toList(),
-                        onChanged: (String? newValue) {
-                          setState(() {
-                            _selectedIndoorDurability = newValue;
-                          });
-                        },
+                            _indoorDurabilityOptions
+                                .map(
+                                  (val) => DropdownMenuItem(
+                                    value: val,
+                                    child: Text(val.capitalizeFirstLetter()),
+                                  ),
+                                )
+                                .toList(),
+                        onChanged:
+                            (val) =>
+                                setState(() => _selectedIndoorDurability = val),
                         validator:
-                            (value) =>
-                                value == null
-                                    ? 'Please select indoor durability'
-                                    : null,
-                      ),
-                      const SizedBox(height: 16),
-
-                      // Has Flowers
-                      CheckboxListTile(
-                        title: const Text('Has Flowers'),
-                        value: _hasFlowers,
-                        onChanged: (bool? value) {
-                          setState(() {
-                            _hasFlowers = value ?? false;
-                          });
-                        },
-                        controlAffinity: ListTileControlAffinity.leading,
-                        contentPadding: EdgeInsets.zero,
-                      ),
-
-                      // Is Active
-                      CheckboxListTile(
-                        title: const Text('Is Active'),
-                        value: _isActive,
-                        onChanged: (bool? value) {
-                          setState(() {
-                            _isActive = value ?? true;
-                          });
-                        },
-                        controlAffinity: ListTileControlAffinity.leading,
-                        contentPadding: EdgeInsets.zero,
-                      ),
-                      const SizedBox(height: 24),
-
-                      // Placements Section
-                      const Text(
-                        'Placements',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
+                            (value) => value == null ? 'Wajib diisi' : null,
                       ),
                       const SizedBox(height: 8),
+                      SwitchListTile(
+                        title: const Text('Berbunga'),
+                        value: _hasFlowers,
+                        onChanged: (val) => setState(() => _hasFlowers = val),
+                        contentPadding: EdgeInsets.zero,
+                        activeColor: Colors.green[600],
+                      ),
+                      SwitchListTile(
+                        title: const Text('Aktif (Tampil di Toko)'),
+                        value: _isActiveForm,
+                        onChanged: (val) => setState(() => _isActiveForm = val),
+                        contentPadding: EdgeInsets.zero,
+                        activeColor: Colors.green[600],
+                      ),
 
-                      // Placements Checkboxes
+                      _buildSectionTitle('Penempatan yang Cocok'),
                       Wrap(
                         spacing: 8.0,
-                        runSpacing: 4.0,
+                        runSpacing: 0.0,
                         children:
                             _placementTypeOptions.map((placement) {
                               return SizedBox(
                                 width:
-                                    MediaQuery.of(context).size.width / 2 -
-                                    24, // Adjust for two columns
+                                    (MediaQuery.of(context).size.width / 2) -
+                                    30,
                                 child: CheckboxListTile(
                                   title: Text(
-                                    placement.replaceAll('_', ' '),
-                                  ), // Prettify display
+                                    placement
+                                        .replaceAll('_', ' ')
+                                        .capitalizeFirstLetter(),
+                                  ),
                                   value: _selectedPlacements.contains(
                                     placement,
                                   ),
-                                  onChanged: (bool? selected) {
+                                  onChanged: (selected) {
                                     setState(() {
                                       if (selected == true) {
                                         _selectedPlacements.add(placement);
@@ -546,30 +570,31 @@ class _PlantFormState extends State<PlantForm> {
                                       ListTileControlAffinity.leading,
                                   contentPadding: EdgeInsets.zero,
                                   dense: true,
+                                  activeColor: Colors.green[600],
                                 ),
                               );
                             }).toList(),
                       ),
-                      const SizedBox(height: 32),
 
-                      // Submit Button
+                      const SizedBox(height: 32),
                       SizedBox(
                         width: double.infinity,
                         height: 50,
-                        child: ElevatedButton(
+                        child: ElevatedButton.icon(
+                          icon: Icon(
+                            widget.plant == null
+                                ? Icons.add_circle_outline
+                                : Icons.save_outlined,
+                          ),
+                          label: Text(
+                            widget.plant == null
+                                ? 'Tambah Tanaman'
+                                : 'Simpan Perubahan',
+                          ),
                           onPressed: _handleSubmit,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green,
-                          ),
-                          child: Text(
-                            widget.plant == null ? 'Add Plant' : 'Save Changes',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              color: Colors.white,
-                            ),
-                          ),
                         ),
                       ),
+                      const SizedBox(height: 20),
                     ],
                   ),
                 ),
