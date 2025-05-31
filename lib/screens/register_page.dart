@@ -11,12 +11,13 @@ class RegisterPage extends StatefulWidget {
 }
 
 class _RegisterPageState extends State<RegisterPage> {
-  final TextEditingController _fullNameController =
-      TextEditingController(); // Ditambahkan
+  final TextEditingController _fullNameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmPasswordController =
       TextEditingController();
+  final TextEditingController _addressController =
+      TextEditingController(); // Ditambahkan
   final _formKey = GlobalKey<FormState>();
   bool _isObscurePassword = true;
   bool _isObscureConfirmPassword = true;
@@ -34,9 +35,14 @@ class _RegisterPageState extends State<RegisterPage> {
 
       try {
         User newUser = User(
-          fullName: _fullNameController.text, // Ditambahkan
+          fullName: _fullNameController.text,
           email: _emailController.text,
           password: _passwordController.text,
+          address:
+              _addressController.text.isNotEmpty
+                  ? _addressController.text
+                  : null, // Ditambahkan
+          // imageUrl is not provided at registration, will be null by default
         );
         int result = await _dbHelper.registerUser(newUser);
 
@@ -54,7 +60,6 @@ class _RegisterPageState extends State<RegisterPage> {
             MaterialPageRoute(builder: (context) => const LoginPage()),
           );
         } else {
-          // Cek apakah error karena email sudah ada
           final existingUser = await _dbHelper.getUserByEmail(
             _emailController.text,
           );
@@ -132,7 +137,6 @@ class _RegisterPageState extends State<RegisterPage> {
                     ),
                   ),
                 TextFormField(
-                  // Field Nama Lengkap
                   controller: _fullNameController,
                   keyboardType: TextInputType.name,
                   decoration: InputDecoration(
@@ -194,6 +198,36 @@ class _RegisterPageState extends State<RegisterPage> {
                     }
                     return null;
                   },
+                ),
+                const SizedBox(height: 16),
+                // Address TextFormField (Ditambahkan)
+                TextFormField(
+                  controller: _addressController,
+                  keyboardType: TextInputType.streetAddress,
+                  decoration: InputDecoration(
+                    labelText: 'Alamat (Opsional)',
+                    prefixIcon: Icon(
+                      Icons.location_on_outlined,
+                      color: Colors.green[700],
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: Colors.green[800]!,
+                        width: 2,
+                      ),
+                    ),
+                  ),
+                  // Validator is optional for an optional field
+                  // validator: (value) {
+                  //   if (value != null && value.isNotEmpty && value.length < 10) {
+                  //     return 'Alamat minimal 10 karakter jika diisi';
+                  //   }
+                  //   return null;
+                  // },
                 ),
                 const SizedBox(height: 16),
                 TextFormField(
@@ -343,10 +377,11 @@ class _RegisterPageState extends State<RegisterPage> {
 
   @override
   void dispose() {
-    _fullNameController.dispose(); // Ditambahkan
+    _fullNameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
+    _addressController.dispose(); // Ditambahkan
     super.dispose();
   }
 }

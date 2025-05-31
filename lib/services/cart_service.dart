@@ -36,13 +36,27 @@ class CartService {
 
   Future<List<CartItem>> getCartItems() async {
     final prefs = await SharedPreferences.getInstance();
-    final String key = await _getCartKey();
+    String? userEmail =
+        await SessionService()
+            .getLoggedInUserEmail(); // Contoh penggunaan langsung
+    if (userEmail == null || userEmail.isEmpty) {
+      return []; // Atau handle error
+    }
+    final String key = 'cartItems_$userEmail';
     final String? cartItemsString = prefs.getString(key);
     if (cartItemsString != null) {
       List<dynamic> decodedList = json.decode(cartItemsString);
       return decodedList.map((item) => CartItem.fromJson(item)).toList();
     }
     return [];
+  }
+
+  Future<void> clearUserCartData(String userEmail) async {
+    if (userEmail.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    final String key = 'cartItems_$userEmail';
+    await prefs.remove(key);
+    print('Cleared cart for $userEmail (key: $key)');
   }
 
   Future<void> _saveCartItems(List<CartItem> items) async {

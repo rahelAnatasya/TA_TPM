@@ -22,7 +22,13 @@ class FavoriteService {
 
   Future<List<int>> getFavoritePlantIds() async {
     final prefs = await SharedPreferences.getInstance();
-    final String key = await _getFavoritesKey();
+    String? userEmail =
+        await SessionService()
+            .getLoggedInUserEmail(); // Contoh penggunaan langsung
+    if (userEmail == null || userEmail.isEmpty) {
+      return []; // Atau handle error
+    }
+    final String key = 'favoritePlantIds_$userEmail';
     final String? favoriteIdsString = prefs.getString(key);
     if (favoriteIdsString != null) {
       List<String> stringIds = List<String>.from(
@@ -44,6 +50,14 @@ class FavoriteService {
         json.encode(favoriteIds.map((id) => id.toString()).toList()),
       );
     }
+  }
+
+  Future<void> clearUserFavoritesData(String userEmail) async {
+    if (userEmail.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    final String key = 'favoritePlantIds_$userEmail';
+    await prefs.remove(key);
+    print('Cleared favorites for $userEmail (key: $key)');
   }
 
   Future<void> removeFavorite(int plantId) async {

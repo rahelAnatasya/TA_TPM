@@ -1,32 +1,39 @@
 class User {
   final int? id;
-  final String fullName; // Ditambahkan
+  final String fullName;
   final String email;
-  final String
-  password; // Dalam aplikasi nyata, simpan password yang sudah di-hash
+  final String password; // In a real app, simpan password yang sudah di-hash
+  final String? imageUrl;
+  final String? address; // Ditambahkan: Alamat pengguna
 
   User({
     this.id,
-    required this.fullName, // Ditambahkan
+    required this.fullName,
     required this.email,
     required this.password,
+    this.imageUrl,
+    this.address, // Ditambahkan
   });
 
   Map<String, dynamic> toMap() {
     return {
       'id': id,
-      'fullName': fullName, // Ditambahkan
+      'fullName': fullName,
       'email': email,
       'password': password,
+      'imageUrl': imageUrl,
+      'address': address, // Ditambahkan
     };
   }
 
   factory User.fromMap(Map<String, dynamic> map) {
     return User(
       id: map['id'] as int?,
-      fullName: map['fullName'] as String? ?? '', // Ditambahkan, tangani null
+      fullName: map['fullName'] as String? ?? '',
       email: map['email'] as String,
       password: map['password'] as String,
+      imageUrl: map['imageUrl'] as String?,
+      address: map['address'] as String?, // Ditambahkan
     );
   }
 }
