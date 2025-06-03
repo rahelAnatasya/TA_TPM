@@ -1,45 +1,81 @@
 import 'package:flutter/material.dart';
-import 'package:tpm_flora/screens/main_page.dart';
-import 'package:tpm_flora/screens/register_page.dart';
+import 'package:tpm_flora/models/user.dart';
+import 'package:tpm_flora/services/auth_service.dart';
+import 'main_page.dart';
+import 'register_page.dart';
+import '../services/session_manager.dart'; // Added import
 
-class Loginpage extends StatefulWidget {
-  const Loginpage({super.key});
+class LoginPage extends StatefulWidget {
+  const LoginPage({super.key});
 
   @override
-  State<Loginpage> createState() => _LoginpageState();
+  State<LoginPage> createState() => _LoginPageState();
 }
 
-class _LoginpageState extends State<Loginpage> {
+class _LoginPageState extends State<LoginPage> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
+  final AuthService _authService = AuthService();
   final _formKey = GlobalKey<FormState>();
   bool _isObscure = true;
   bool _isLoading = false;
   String? _errorMessage;
 
-  void _login() {
+  @override
+  void initState() {
+    super.initState();
+    _checkLoginStatus();
+  }
+
+  Future<void> _checkLoginStatus() async {
+    bool isLoggedIn = await SessionManager().isLoggedIn();
+    if (isLoggedIn) {
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const MainPage()),
+        );
+      }
+    }
+  }
+
+  void _login() async {
     if (_formKey.currentState!.validate()) {
       setState(() {
         _isLoading = true;
         _errorMessage = null;
       });
 
-      // Simulate network delay
-      Future.delayed(const Duration(seconds: 1), () {
-        if (_emailController.text == 'admin@gmail.com' &&
-            _passwordController.text == 'admin') {
+      try {
+        User? user = await _authService.loginWithEmail(
+          _emailController.text.trim(),
+          _passwordController.text.trim(),
+        );
+
+        await SessionManager().saveUserSession(
+          isLoggedIn: true,
+          email: _emailController.text,
+          // username: 'admin', // You can add a username if available
+        );
+        if (user != null && mounted) {
           // Navigate to next screen on successful login
-          Navigator.push(
+          Navigator.pushReplacement(
             context,
-            MaterialPageRoute(builder: (context) => MainPage()),
+            MaterialPageRoute(builder: (context) => const MainPage()),
           );
         } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Username/Email atau password salah')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
           setState(() {
             _errorMessage = 'Email atau password salah';
             _isLoading = false;
           });
         }
-      });
+      }
     }
   }
 
@@ -96,6 +132,13 @@ class _LoginpageState extends State<Loginpage> {
                   validator: (value) {
                     if (value == null || value.isEmpty) {
                       return 'Silakan masukkan email';
+                    }
+                    // Basic email validation
+                    final bool emailValid = RegExp(
+                      r"^[a-zA-Z0-9.a-zA-Z0-9.!#$%&'*+-/=?^_`{|}~]+@[a-zA-Z0-9]+\.[a-zA-Z]+",
+                    ).hasMatch(value);
+                    if (!emailValid) {
+                      return 'Silakan masukkan email yang valid';
                     }
                     return null;
                   },
@@ -169,14 +212,14 @@ class _LoginpageState extends State<Loginpage> {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (context) => RegisterPage(),
+                            builder: (context) => const RegisterPage(),
                           ),
                         );
                       },
                       style: TextButton.styleFrom(
                         foregroundColor: Colors.green[800],
                       ),
-                      child: const Text('Login'),
+                      child: const Text('Register'),
                     ),
                   ],
                 ),
